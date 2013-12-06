@@ -74,9 +74,15 @@
 		
 		usort($phrases, "cmp");
 	  
-		foreach($phrases as $phrase)
-			if($phrase->relevance >= 100 - $depth)
+	  
+	    $relevances = array();
+		
+		foreach($phrases as $phrase){
+			if($phrase->relevance >= 100 - $depth & !in_array($phrase->relevance, $relevances)){
+				array_push($relevances, $phrase->relevance);
 				echo $phrase->content;
+			}
+		}
 		
 	  
 		echo mysqli_error($con);
@@ -96,6 +102,18 @@
 		foreach($phrases as $phrase)
 			if($maxRelevance != $minRelevance)
 				$phrase->relevance = 100 * ($phrase->relevance-$minRelevance)/($maxRelevance-$minRelevance);
+				
+		$maxComplexity = -9999;
+		$minComplexity = 9999;
+		foreach($phrases as $phrase){
+			if($phrase->complexity > $maxComplexity)
+				$maxComplexity = $phrase->complexity;
+		    if($phrase->complexity < $minComplexity)
+				$minComplexity = $phrase->complexity;
+		}		
+		foreach($phrases as $phrase)
+			if($maxComplexity != $minComplexity)
+				$phrase->complexity = 100 * ($phrase->complexity-$minComplexity)/($maxComplexity-$minComplexity);
 	}
 
 	class phrase {
@@ -153,7 +171,7 @@
 	}
 	
 	function cmp($p1, $p2){
-		if($p1->relevance - 2 * $p1->complexity > $p2->relevance - 2 * $p2->complexity)
+		if($p1->relevance - $p1->complexity > $p2->relevance - $p2->complexity)
 			return -1;
 		else
 			return 1;
