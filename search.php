@@ -8,10 +8,11 @@
 		fetchResults();
 	}
 	
+	
 	function fetchResults(){
 		global $depth, $breadth, $prompt, $wordmap;
-		$con = mysqli_connect("localhost","neelvirdy","kryptiatk1","studious");
-		$db = 'filteredPhrases';
+        $con = mysqli_connect("localhost","neelvirdy","kryptiatk1","studious");
+		$db = 'phrases';
 		$contentPhrases = array();
 		$keywordPhrases = array();
 		$phrases = array();
@@ -21,11 +22,12 @@
 			echo "Failed to connect to MySQL: " . mysqli_connect_error();
 			
 		$escapedPrompt = mysqli_real_escape_string($con, $prompt);
-		$contentResult = mysqli_query($con,"SELECT * FROM " . $db . " WHERE content Like '% " . $escapedPrompt . " %';");
+		$contentResult = mysqli_query($con,"SELECT * FROM " . $db . " WHERE content Like '% " . $escapedPrompt . " %' LIMIT 100;");
 		while($row = mysqli_fetch_array($contentResult)) {
 			$contentPhrase = new phrase($row[0] . nl2br("\n"), $row[1], $row[2]);
 			array_push($contentPhrases, $contentPhrase);
 		}
+		
 		
 		foreach($contentPhrases as $contentPhrase)
 			foreach($contentPhrase->keywords as $keyword)
@@ -38,13 +40,14 @@
 		foreach($promptWords as $promptWord){
 			$promptWord = trim($promptWord);
 			$escapedPromptWord = mysqli_real_escape_string($con, $promptWord);
-			$keywordResult = mysqli_query($con,"SELECT * FROM " . $db . " WHERE keywords LIKE '% " . $escapedPromptWord . ",%';");
+			$keywordResult = mysqli_query($con,"SELECT * FROM " . $db . " WHERE keywords LIKE '% " . $escapedPromptWord . ",%' LIMIT 100;");
 
 			while($row = mysqli_fetch_array($keywordResult)) {
 				$keywordPhrase = new phrase($row[0] . nl2br("\n"), $row[1], $row[2]);
 				array_push($keywordPhrases, $keywordPhrase);
 			}
 		}
+		
 		
 		foreach($keywordPhrases as $keywordPhrase){
 			$containsAllPromptWords = true;
@@ -53,16 +56,19 @@
 					$containsAllPromptWords = false;
 			}
 			if($containsAllPromptWords)
-				foreach($keywordPhrase->keywords as $keyword)
-					if(in_array($keyword, array_keys($wordmap)))
-						$wordmap[$keyword] += 2;
-					else
-						$wordmap[$keyword] = 2;
+				foreach($keywordPhrase->keywords as $keyword){
+					if(!is_numeric($keyword)){
+						if(in_array($keyword, array_keys($wordmap)))
+							$wordmap[$keyword] += 2;
+						else
+							$wordmap[$keyword] = 2;
+					}
+				}
 		}
 		
 		foreach($keywordPhrases as $keywordPhrase)
 			foreach($keywordPhrase->keywords as $keyword)
-				if(sizeof($wordmap) < $breadth)
+				if(sizeof($wordmap) < $breadth && !is_numeric($keyword))
 					if(in_array($keyword, array_keys($wordmap)))
 						$wordmap[$keyword] += 1;
 					else
@@ -74,17 +80,15 @@
 		
 		usort($phrases, "cmp");
 	  
-	  
 	    $relevances = array();
 		
 		foreach($phrases as $phrase){
 			if($phrase->relevance >= 100 - $depth & !in_array($phrase->relevance, $relevances)){
 				array_push($relevances, $phrase->relevance);
-				echo $phrase->content;
+				echo '<sup> <a href=' . $phrase->source . '>src</a> </sup>' . $phrase->content;
 			}
 		}
 		
-	  
 		echo mysqli_error($con);
 		mysqli_close($con);
 	}
@@ -92,28 +96,25 @@
 	function normalize($phrases){
 		$maxRelevance = -9999;
 		$minRelevance = 9999;
+		$maxComplexity = -9999;
+		$minComplexity = 9999;
 		foreach($phrases as $phrase){
 			$phrase->calculateRelevance();
 			if($phrase->relevance > $maxRelevance)
 				$maxRelevance = $phrase->relevance;
 		    if($phrase->relevance < $minRelevance)
 				$minRelevance = $phrase->relevance;
-		}		
-		foreach($phrases as $phrase)
-			if($maxRelevance != $minRelevance)
-				$phrase->relevance = 100 * ($phrase->relevance-$minRelevance)/($maxRelevance-$minRelevance);
-				
-		$maxComplexity = -9999;
-		$minComplexity = 9999;
-		foreach($phrases as $phrase){
 			if($phrase->complexity > $maxComplexity)
 				$maxComplexity = $phrase->complexity;
 		    if($phrase->complexity < $minComplexity)
 				$minComplexity = $phrase->complexity;
 		}		
-		foreach($phrases as $phrase)
+		foreach($phrases as $phrase){
+			if($maxRelevance != $minRelevance)
+				$phrase->relevance = 100 * ($phrase->relevance-$minRelevance)/($maxRelevance-$minRelevance);
 			if($maxComplexity != $minComplexity)
 				$phrase->complexity = 100 * ($phrase->complexity-$minComplexity)/($maxComplexity-$minComplexity);
+		}
 	}
 
 	class phrase {
@@ -123,45 +124,32 @@
 		public $keywordsString;
 		public $complexity;
 		public $relevance;
-		public $immediateRelevance;
 		
 		public function __construct($content, $source, $keywords)
 		{
+			//$content = preg_replace("/(?![.=$'€%-])\p{P}/u", "", $content);
 			$this->content = $content;
 			$this->source = $source;
 			$this->keywordsString = $keywords;
-			$keywords = substr($keywords, strripos($keywords, '['), stripos($keywords, ']') - strripos($keywords, '['));
-			$this->keywords = explode(',', $keywords);
-			foreach($this->keywords as $keyword)
+			$tempKeywords = explode(',', $keywords);
+			$this->keywords = array();
+			foreach($tempKeywords as $keyword){
+				//$keyword = preg_replace("/(?![.=$'€%-])\p{P}/u", "", $keyword);
 				trim($keyword);
+				array_push($this->keywords, $keyword);
+			}
 			$this->complexity = complexity($this->content);
 			$this->relevance = 0;
-			$this->immediateRelevance = 0;
-			/*global $prompt, $wordmap;
-			$promptWords = explode(" ", $prompt);
-			foreach($promptWords as $promptWord){
-				if(strlen($promptWord) > 0 && stripos($this->keywordsString, $promptWord) !== false)
-					$this->immediateRelevance += 1.5;		
-				if(strlen($promptWord) > 0 && stripos($this->source, $promptWord) !== false)
-					$this->immediateRelevance += 1;
-			}
-			if(strpos($this->content, $prompt) !== false)
-				$this->immediateRelevance += 3;
-			foreach($this->keywords as $keyword){
-				foreach($promptWords as $promptWord)
-					if(stripos($keyword, $promptWord) === false)
-						$this->immediateRelevance -= 0.05;
-			}*/
 		}
 		
 		public function calculateRelevance(){
 			global $prompt, $wordmap;
 			$phraseWords = explode(" ", $this->content);
 			foreach($phraseWords as $phraseWord)
-				if(in_array($phraseWord, array_keys($wordmap)))
+				if(!is_numeric($phraseWord) && in_array($phraseWord, array_keys($wordmap)))
 					$this->relevance += $wordmap[$phraseWord];
 			foreach($this->keywords as $keyword)
-				if(in_array($keyword, array_keys($wordmap)))
+				if(!is_numeric($keyword) && in_array($keyword, array_keys($wordmap)))
 					$this->relevance += $wordmap[$keyword];
 		}
 		
